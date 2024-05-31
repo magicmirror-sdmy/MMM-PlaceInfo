@@ -21,8 +21,8 @@ Module.register("MMM-PlaceInfo", {
     showText: true,
 
     weatherUnits: config.units,
-    weatherAPI: "https://api.openweathermap.org/data/",
-    weatherAPIEndpoint: "group",
+    weatherAPI: "https://api.openweathermap.org/data",
+    weatherAPIEndpoint: "weather",
     weatherAPIVersion: "2.5",
     weatherAPIKey: "",
     weatherInterval: 10 * 60 * 1000, // every 10 minutes
@@ -86,8 +86,7 @@ Module.register("MMM-PlaceInfo", {
     var css = [
       {
         id: "flag-icon-CSS",
-        href:
-          "https://cdnjs.cloudflare.com/ajax/libs/flag-icon-css/2.8.0/css/flag-icon.min.css"
+        href: "https://cdnjs.cloudflare.com/ajax/libs/flag-icon-css/2.8.0/css/flag-icon.min.css"
       }
     ];
     css.forEach(function (c) {
@@ -117,13 +116,11 @@ Module.register("MMM-PlaceInfo", {
     if (!this.config.currencyAPIKey) {
       this.state.csummary = "disabled (no API key)";
     } else {
-      this.sendSocketNotification("LOG", this.name + ": Scheduling currency update with API key: " + this.config.currencyAPIKey);
       this.scheduleUpdate(this.state.currency, this.config.currencyLoadDelay);
     }
     if (!this.config.weatherAPIKey) {
       this.state.wsummary = "disabled (no API key)";
     } else {
-      this.sendSocketNotification("LOG", this.name + ": Scheduling weather update with API key: " + this.config.weatherAPIKey);
       this.scheduleUpdate(this.state.weather, this.config.weatherLoadDelay);
     }
 
@@ -147,15 +144,12 @@ Module.register("MMM-PlaceInfo", {
         currencyInfo += "Currency data disabled (no API key)\n";
       } else {
         if (this.hasOwnProperty("rateUpdate")) {
-          currencyInfo +=
-            "Currency data last updated " + this.rateUpdate + "\n";
+          currencyInfo += "Currency data last updated " + this.rateUpdate + "\n";
         }
         if (this.config.currencyRelativeTo) {
-          currencyInfo +=
-            "Currency relative to " + this.config.currencyRelativeTo + "\n";
+          currencyInfo += "Currency relative to " + this.config.currencyRelativeTo + "\n";
         } else {
-          currencyInfo =
-            "Currency relative to " + this.config.currencyBase + "\n";
+          currencyInfo = "Currency relative to " + this.config.currencyBase + "\n";
         }
       }
       customHeader.innerHTML = currencyInfo;
@@ -270,51 +264,85 @@ Module.register("MMM-PlaceInfo", {
       outputWrapper.appendChild(table);
     }
     wrapper.appendChild(outputWrapper);
-
     return wrapper;
   },
 
-  scheduleUpdate: function (what, delay) {
-    if (what.timer) {
-      clearTimeout(what.timer);
+  socketNotificationReceived: function (notification, payload) {
+    if (notification === "CURRENCY_DATA") {
+      this.state.currency.values = {};
+      if (payload.base !== this.config.currencyBase) {
+        this.state.cstatus = "error: currencyBase not in result";
+      } else {
+        this.rateUpdate = moment().format("MMM Do YYYY HH:mm");
+        this.state.cstatus = "Loaded";
+        if (this.config.currencyRelativeTo) {
+          var base = this.config.currencyRelativeTo.toUpperCase();
+          for (var currency in payload.rates) {
+            if (base == currency) {
+              for (var placeIdx in this.config.places) {
+                var place = this.config.places[placeIdx];
+                if (payload.rates.hasOwnProperty(place.currency)) {
+                  var fx =
+                    payload.rates[place.currency] / payload.rates[base];
+                  if (this.config.currencyReversed) {
+                    fx = payload.rates[base] / payload.rates[place.currency];
+                  }
+                  this.state.currency.values[place.currency] = fx.toFixed(
+                    this.config.currencyPrecision
+                  );
+                }
+              }
+            }
+          }
+        } else {
+          for (var placeIdx in this.config.places) {
+            var place = this.config.places[placeIdx];
+            if (payload.rates.hasOwnProperty(place.currency)) {
+              this.state.currency.values[place.currency] = payload.rates[
+                place.currency
+              ].toFixed(this.config.currencyPrecision);
+            }
+          }
+        }
+      }
+      this.updateDom();
     }
-    what.timer = setTimeout(function () {
-      what.fn();
+
+    if (notification === "WEATHER_DATA") {
+      if (!payload || !payload.places || payload.places.length == 0) {
+        this.state.wstatus = "Error: No payload";
+      } else {
+        this.state.weather.values = payload.places;
+        this.state.wstatus = "Loaded";
+      }
+      this.updateDom();
+    }
+  },
+
+  scheduleUpdate: function (stateObj, delay) {
+    var self = this;
+    stateObj.timer = setTimeout(function () {
+      stateObj.fn();
+      self.scheduleUpdate(stateObj, stateObj.interval);
     }, delay);
   },
 
   updateWeather: function () {
-    this.sendSocketNotification("GET_WEATHER", this.config);
+    this.sendSocketNotification("GET_WEATHER", {
+      weatherAPI: this.config.weatherAPI,
+      weatherAPIEndpoint: this.config.weatherAPIEndpoint,
+      weatherAPIVersion: this.config.weatherAPIVersion,
+      weatherAPIKey: this.config.weatherAPIKey,
+      weatherUnits: this.config.weatherUnits,
+      places: this.config.places
+    });
   },
 
   updateCurrencies: function () {
-    this.sendSocketNotification("GET_CURRENCIES", this.config);
-  },
-
-  socketNotificationReceived: function (notification, payload) {
-    if (notification === "WEATHER_DATA") {
-      this.processWeather(payload);
-    }
-    if (notification === "CURRENCY_DATA") {
-      this.processCurrencies(payload);
-    }
-    if (notification === "LOG") {
-      console.log(payload);
-    }
-  },
-
-  processWeather: function (data) {
-    this.state.weather.values = data.places;
-    this.state.weather.loaded = true;
-    this.state.wstatus = "Loaded";
-    this.updateDom();
-  },
-
-  processCurrencies: function (data) {
-    this.state.currency.values = data.rates;
-    this.state.currency.loaded = true;
-    this.state.cstatus = "Loaded";
-    this.rateUpdate = moment.unix(data.timestamp).fromNow();
-    this.updateDom();
+    this.sendSocketNotification("GET_CURRENCIES", {
+      currencyAPI: this.config.currencyAPI,
+      currencyAPIKey: this.config.currencyAPIKey,
+      currencyBase: this.config.currencyBase
+    });
   }
 });
