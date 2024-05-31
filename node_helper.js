@@ -1,98 +1,104 @@
-/* Magic Mirror
- * Node Helper: MMM-PlaceInfo
- *
- * By Nick Williams
- * MIT Licensed.
- */
-
 const NodeHelper = require("node_helper");
 const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
+const moment = require("moment");
+
+const currencyCachePath = path.resolve(__dirname, "currency_cache.json");
 
 module.exports = NodeHelper.create({
   start: function () {
-    console.log(this.name + " helper method started...");
+    this.log("MMM-PlaceInfo helper method started...");
   },
 
   socketNotificationReceived: function (notification, payload) {
     if (notification === "GET_WEATHER") {
-      console.log(this.name + ": Received GET_WEATHER request with payload: ", payload);
+      this.log("Received GET_WEATHER request", payload);
       this.getWeather(payload);
     }
 
     if (notification === "GET_CURRENCIES") {
-      console.log(this.name + ": Received GET_CURRENCIES request with payload: ", payload);
+      this.log("Received GET_CURRENCIES request", payload);
       this.getCurrencies(payload);
-    }
-
-    if (notification === "LOG") {
-      console.log(this.name + ": " + payload);
     }
   },
 
   getWeather: function (payload) {
-    console.log(this.name + ": Fetching weather data with API key: " + payload.weatherAPIKey);
-    var self = this;
-    var urls = [];
-    payload.places.forEach(function (place) {
-      urls.push(
-        `${payload.weatherAPI}/${payload.weatherAPIVersion}/weather?id=${place.weatherID}&units=${payload.weatherUnits}&appid=${payload.weatherAPIKey}`
-      );
-    });
+    this.log("Fetching weather data...");
+    const urls = payload.places.map(place => 
+      `${payload.weatherAPI}/${payload.weatherAPIVersion}/${payload.weatherAPIEndpoint}?id=${place.weatherID}&units=${payload.weatherUnits}&appid=${payload.weatherAPIKey}`
+    );
 
-    axios
-      .all(
-        urls.map(function (url) {
-          return axios.get(url);
-        })
-      )
-      .then(
-        axios.spread(function (...responses) {
-          var weatherData = responses.map(function (response) {
-            return response.data;
-          });
-          console.log(self.name + ": Weather data received: ", weatherData);
-          self.sendSocketNotification("WEATHER_DATA", { places: weatherData });
-        })
-      )
-      .catch(function (error) {
-        console.error(self.name + ": Error getting weather data: ", error);
+    axios.all(urls.map(url => axios.get(url)))
+      .then(axios.spread((...responses) => {
+        const weatherData = responses.map(response => response.data);
+        this.log("Weather data received:", weatherData);
+        this.sendSocketNotification("WEATHER_DATA", { places: weatherData });
+      }))
+      .catch(error => {
+        this.logError("Error getting weather data:", error);
       });
   },
 
   getCurrencies: function (payload) {
-    console.log(this.name + ": Fetching currency data with API key: " + payload.currencyAPIKey);
-    var self = this;
-    var cacheFile = path.resolve(__dirname, "currency_cache.json");
+    this.log("Fetching currency data...");
 
-    // Check if cached data exists and is still valid
-    if (fs.existsSync(cacheFile)) {
-      var cachedData = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
-      var cacheTime = new Date(cachedData.timestamp * 1000);
-      var now = new Date();
-      var cacheAge = (now - cacheTime) / 1000; // age in seconds
+    fs.readFile(currencyCachePath, (err, data) => {
+      if (err) {
+        this.log("No currency cache found, making API call");
+        this.fetchAndCacheCurrencyData(payload);
+      } else {
+        const cache = JSON.parse(data);
+        const cacheTimestamp = moment(cache.timestamp);
+        const now = moment();
 
-      // If cache is less than 4 hours old, use it
-      if (cacheAge < 4 * 60 * 60) {
-        console.log(this.name + ": Using cached currency data.");
-        self.sendSocketNotification("CURRENCY_DATA", cachedData);
-        return;
+        if (now.diff(cacheTimestamp, 'hours') >= 12) {
+          this.log("Currency cache expired, making API call");
+          this.fetchAndCacheCurrencyData(payload);
+        } else {
+          this.log("Using cached currency data");
+          this.sendSocketNotification("CURRENCY_DATA", cache.data);
+        }
       }
-    }
+    });
+  },
 
-    var url = `${payload.currencyAPI}?access_key=${payload.currencyAPIKey}&base=${payload.currencyBase}`;
-    console.log(this.name + ": Currency API URL: ", url);
+  fetchAndCacheCurrencyData: function (payload) {
+    const self = this;
+    const url = `https://api.apilayer.com/exchangerates_data/latest?base=${payload.currencyBase}`;
 
-    axios
-      .get(url)
-      .then(function (response) {
-        console.log(self.name + ": Currency data received: ", response.data);
-        fs.writeFileSync(cacheFile, JSON.stringify(response.data));
+    const requestOptions = {
+      method: 'GET',
+      headers: { apikey: payload.currencyAPIKey },
+      redirect: 'follow'
+    };
+
+    axios.get(url, requestOptions)
+      .then(response => {
+        self.log("Currency data received:", response.data);
+        const cache = {
+          timestamp: moment().format(),
+          data: response.data
+        };
+        fs.writeFile(currencyCachePath, JSON.stringify(cache), (err) => {
+          if (err) {
+            self.logError("Error writing currency cache:", err);
+          } else {
+            self.log("Currency data cached successfully");
+          }
+        });
         self.sendSocketNotification("CURRENCY_DATA", response.data);
       })
-      .catch(function (error) {
-        console.error(self.name + ": Error getting currency data: ", error);
+      .catch(error => {
+        self.logError("Error getting currency data:", error);
       });
+  },
+
+  log: function (...args) {
+    console.log(this.name + ":", ...args);
+  },
+
+  logError: function (...args) {
+    console.error(this.name + ":", ...args);
   }
 });
