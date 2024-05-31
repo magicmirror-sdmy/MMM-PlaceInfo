@@ -51,7 +51,7 @@ Module.register("MMM-PlaceInfo", {
       "50n": "wi-night-alt-cloudy-windy"
     },
 
-    currencyAPI: "http://data.fixer.io/api/latest",
+    currencyAPI: "https://api.apilayer.com/exchangerates_data/latest", // updated endpoint
     currencyBase: "EUR",
     currencyRelativeTo: "EUR",
     currencyReversed: false,
