@@ -16,7 +16,7 @@ The currency exchange information comes from https://apilayer.com/marketplace/ex
 
 ## Installation
 
-Open a terminal session, navigate to your MagicMirror's `modules` folder and execute `git clone https://github.com/njw/MMM-PlaceInfo.git`, a new folder called MMM-PlaceInfo will be created.
+Open a terminal session, navigate to your MagicMirror's `modules` folder and execute `git clone https://github.com/magicmirror-sdmy/MMM-PlaceInfo.git`, a new folder called MMM-PlaceInfo will be created.
 
 Activate the module by adding it to the config.js file as shown below.
 
